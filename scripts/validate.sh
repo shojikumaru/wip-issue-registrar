@@ -128,7 +128,35 @@ for (( i=0; i<EPIC_COUNT; i++ )); do
   done
 done
 
-# --- 7. DAG edge references ---
+# --- 7. dependsOn reference validation ---
+# Collect all issue IDs only (not epic IDs)
+ISSUE_IDS=()
+for (( i=0; i<EPIC_COUNT; i++ )); do
+  ISSUE_COUNT=$(jq ".epics[$i].issues // [] | length" "$PACKET")
+  for (( j=0; j<ISSUE_COUNT; j++ )); do
+    ISSUE_IDS+=("$(jq -r ".epics[$i].issues[$j].id // empty" "$PACKET")")
+  done
+done
+
+for (( i=0; i<EPIC_COUNT; i++ )); do
+  ISSUE_COUNT=$(jq ".epics[$i].issues // [] | length" "$PACKET")
+  for (( j=0; j<ISSUE_COUNT; j++ )); do
+    IS="$.epics[$i].issues[$j]"
+    DEP_COUNT=$(jq ".epics[$i].issues[$j].dependsOn // [] | length" "$PACKET")
+    for (( k=0; k<DEP_COUNT; k++ )); do
+      DEP=$(jq -r ".epics[$i].issues[$j].dependsOn[$k]" "$PACKET")
+      found=false
+      for iid in "${ISSUE_IDS[@]}"; do
+        [[ "$iid" == "$DEP" ]] && found=true && break
+      done
+      if [[ "$found" == "false" ]]; then
+        err "$IS.dependsOn[$k]  References unknown issue: '$DEP'"
+      fi
+    done
+  done
+done
+
+# --- 8. DAG edge references ---
 EDGE_COUNT=$(jq '.dependencyDAG.edges // [] | length' "$PACKET")
 for (( i=0; i<EDGE_COUNT; i++ )); do
   FROM=$(jq -r ".dependencyDAG.edges[$i][0]" "$PACKET")
@@ -149,13 +177,13 @@ for (( i=0; i<EDGE_COUNT; i++ )); do
   fi
 done
 
-# --- 8. Duplicate ID check ---
+# --- 9. Duplicate ID check ---
 DUP=$(printf '%s\n' "${ALL_IDS[@]}" | sort | uniq -d | head -1)
 if [[ -n "$DUP" ]]; then
   err "Duplicate ID found: $DUP"
 fi
 
-# --- 9. Report ---
+# --- 10. Report ---
 if [[ ${#ERRORS[@]} -gt 0 ]]; then
   echo "Validation failed with ${#ERRORS[@]} error(s):" >&2
   for e in "${ERRORS[@]}"; do
