@@ -1,0 +1,56 @@
+{
+  "version": "1.1",
+  "project": "cycle-test",
+  "epics": [
+    {
+      "id": "EPIC-001",
+      "title": "Cycle Test",
+      "goal": "Test cycle detection",
+      "modules": ["test"],
+      "issues": [
+        {
+          "id": "ISSUE-001",
+          "module": "test",
+          "goal": "Task A",
+          "acceptanceCriteria": ["Done"],
+          "interfaces": [],
+          "constraints": [],
+          "testPlan": ["Test"],
+          "dependsOn": ["ISSUE-003"],
+          "priority": "high"
+        },
+        {
+          "id": "ISSUE-002",
+          "module": "test",
+          "goal": "Task B",
+          "acceptanceCriteria": ["Done"],
+          "interfaces": [],
+          "constraints": [],
+          "testPlan": ["Test"],
+          "dependsOn": ["ISSUE-001"],
+          "priority": "high"
+        },
+        {
+          "id": "ISSUE-003",
+          "module": "test",
+          "goal": "Task C",
+          "acceptanceCriteria": ["Done"],
+          "interfaces": [],
+          "constraints": [],
+          "testPlan": ["Test"],
+          "dependsOn": ["ISSUE-002"],
+          "priority": "high"
+        }
+      ]
+    }
+  ],
+  "dependencyDAG": {
+    "nodes": ["ISSUE-001", "ISSUE-002", "ISSUE-003"],
+    "edges": [
+      ["ISSUE-001", "ISSUE-002"],
+      ["ISSUE-002", "ISSUE-003"],
+      ["ISSUE-003", "ISSUE-001"]
+    ]
+  },
+  "milestones": []
+}
