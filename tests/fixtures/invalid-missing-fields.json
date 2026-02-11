@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "epics": [
+    { "id": "EPIC-001" }
+  ],
+  "issues": [
+    {
+      "id": "ISSUE-001",
+      "epicId": "EPIC-001"
+    }
+  ]
+}
