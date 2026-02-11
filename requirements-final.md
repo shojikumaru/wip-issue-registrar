@@ -82,9 +82,10 @@ claire-OS の開発ライフサイクルにおいて、設計スキル（design-
 - **Priority: must**
 
 ### FR-006: 冪等性（Idempotency）
-- apply 実行前に、対象リポジトリの既存 Issue を検索し、以下の2重チェックで重複を判定する:
-  1. Issue body 内のメタデータコメント（FR-005）
-  2. ラベル `packet:<ISSUE-ID>` の存在
+- apply 実行前に、対象リポジトリの既存 Issue を検索し、以下の優先順で重複を判定する:
+  1. **一次キー**: ラベル `oc:issue-id=<ISSUE-ID>` の存在
+  2. **Fallback**: Issue body 内のメタデータコメント（FR-005）
+- 検索対象: リポジトリ全体（**closed Issue を含む**）
 - いずれかで既存 Issue が見つかった場合はスキップし、ログに記録する
 - **Priority: must**
 
@@ -93,7 +94,7 @@ claire-OS の開発ライフサイクルにおいて、設計スキル（design-
   - `module:<module名>` — モジュール識別
   - `priority:<high|medium|low>` — 優先度
   - `epic:<EPIC-ID>` — Epic 所属
-  - `packet:<ISSUE-ID>` — 冪等性チェック用
+  - `oc:issue-id=<ISSUE-ID>` — 冪等性チェック用（一次キー）
 - 対象リポジトリに存在しないラベルは自動作成する（色はカテゴリごとにデフォルト値）
 - **Priority: must**（冪等性に必要なため should → must に昇格）
 
@@ -178,9 +179,7 @@ claire-OS の開発ライフサイクルにおいて、設計スキル（design-
 - **Priority: must**
 
 ### NFR-005: 互換性
-- issue-packet schema v1.0 と v1.1 の両方をサポートする
-  - v1.0: `body_md`, `milestones` フィールドを任意として扱う
-  - v1.1: 全フィールド必須
+- issue-packet schema **v1.1 を正として実装**する（v1.0 互換は対象外）
 - `gh` CLI v2.x 系を前提とする（`gh --version` で事前チェック）
 - **Priority: should**
 
