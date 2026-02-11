@@ -63,14 +63,10 @@ if [[ "$MODE" != "dryRun" && "$MODE" != "apply" ]]; then
   exit 2
 fi
 
-# --- Auto-detect repo if not specified ---
-if [[ -z "$REPO" && "$MODE" == "apply" ]]; then
-  REPO=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || true)
-  if [[ -z "$REPO" ]]; then
-    echo "[ERROR] Could not detect repository. Use --repo owner/repo" >&2
-    exit 2
-  fi
-  echo "[INFO] Auto-detected repo: $REPO" >&2
+# --- Repo validation for apply ---
+if [[ "$MODE" == "apply" && -z "$REPO" ]]; then
+  echo "[ERROR] --repo is required for apply mode (safety: explicit target only)" >&2
+  exit 2
 fi
 
 # --- Pre-flight checks ---
