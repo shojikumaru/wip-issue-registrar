@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "packetFile": "tests/fixtures/valid-packet.json",
+  "packetHash": "dummy",
+  "startedAt": "2026-02-11T16:09:07Z",
+  "updatedAt": "2026-02-11T16:10:21Z",
+  "created": [
+    {
+      "packetId": "ISSUE-001",
+      "githubNumber": 1,
+      "url": "https://github.com/shojikumaru/test-issue-registrar-sandbox/issues/1"
+    },
+    {
+      "packetId": "ISSUE-002",
+      "githubNumber": 2,
+      "url": "https://github.com/shojikumaru/test-issue-registrar-sandbox/issues/2"
+    },
+    {
+      "packetId": "ISSUE-003",
+      "githubNumber": 3,
+      "url": "https://github.com/shojikumaru/test-issue-registrar-sandbox/issues/3"
+    }
+  ],
+  "failed": [
+    {
+      "packetId": "ISSUE-002",
+      "error": "simulated failure",
+      "retryable": true
+    }
+  ],
+  "pending": [
+    "ISSUE-001"
+  ],
+  "labels": {
+    "created": [],
+    "existed": []
+  },
+  "milestones": {
+    "created": [],
+    "existed": []
+  }
+}

@@ -18,6 +18,13 @@ log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [INFO] $*" >&2; }
 log_warn() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [WARN] $*" >&2; }
 log_error() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [ERROR] $*" >&2; }
 
+# --- ID map using temp file (bash 3.x compatible) ---
+ID_MAP_FILE=$(mktemp)
+trap 'rm -f "$ID_MAP_FILE"' EXIT
+
+id_map_set() { echo "$1=$2" >> "$ID_MAP_FILE"; }
+id_map_get() { grep "^$1=" "$ID_MAP_FILE" 2>/dev/null | tail -1 | cut -d= -f2; }
+
 # --- Pre-flight ---
 log "Checking repo access: $REPO"
 if ! gh_check_repo "$REPO"; then
@@ -40,38 +47,32 @@ fi
 # shellcheck disable=SC2086
 state_set_pending $ORDER
 
-# --- Map to track packetId -> GitHub issue number ---
-declare -A ID_MAP
-
 # Load already-created from state
 while IFS= read -r line; do
   pid=$(echo "$line" | jq -r '.packetId')
   ghn=$(echo "$line" | jq -r '.githubNumber')
-  ID_MAP["$pid"]="$ghn"
+  id_map_set "$pid" "$ghn"
 done < <(jq -c '.created[]' "$STATE_PATH" 2>/dev/null || true)
 
 # --- Ensure labels exist ---
 log "Ensuring labels..."
-LABEL_COLORS=("epic:=1d76db" "module:=0e8a16" "priority:=d93f0b" "oc:issue-id==ededed")
-
-# Collect all needed labels
-ALL_LABELS=()
 EPIC_COUNT=$(jq '.epics | length' "$PACKET")
+ALL_LABELS=""
 for (( i=0; i<EPIC_COUNT; i++ )); do
   EPIC_ID=$(jq -r ".epics[$i].id" "$PACKET")
-  ALL_LABELS+=("epic:$EPIC_ID")
+  ALL_LABELS="$ALL_LABELS epic:$EPIC_ID"
 
   ISSUE_COUNT=$(jq ".epics[$i].issues | length" "$PACKET")
   for (( j=0; j<ISSUE_COUNT; j++ )); do
     MODULE=$(jq -r ".epics[$i].issues[$j].module" "$PACKET")
     PRIORITY=$(jq -r ".epics[$i].issues[$j].priority" "$PACKET")
     ID=$(jq -r ".epics[$i].issues[$j].id" "$PACKET")
-    ALL_LABELS+=("module:$MODULE" "priority:$PRIORITY" "oc:issue-id=$ID")
+    ALL_LABELS="$ALL_LABELS module:$MODULE priority:$PRIORITY oc:issue-id=$ID"
   done
 done
 
-# Deduplicate and create
-for label in $(printf '%s\n' "${ALL_LABELS[@]}" | sort -u); do
+for label in $(echo "$ALL_LABELS" | tr ' ' '\n' | sort -u); do
+  [[ -z "$label" ]] && continue
   color="ededed"
   [[ "$label" == epic:* ]] && color="1d76db"
   [[ "$label" == module:* ]] && color="0e8a16"
@@ -80,14 +81,16 @@ for label in $(printf '%s\n' "${ALL_LABELS[@]}" | sort -u); do
 done
 
 # --- Ensure milestones exist ---
-declare -A MS_MAP
+MS_MAP_FILE=$(mktemp)
 MS_COUNT=$(jq '.milestones // [] | length' "$PACKET")
 for (( i=0; i<MS_COUNT; i++ )); do
   MS_NAME=$(jq -r ".milestones[$i].name" "$PACKET")
   MS_NUM=$(gh_ensure_milestone "$REPO" "$MS_NAME")
-  MS_MAP["$MS_NAME"]="$MS_NUM"
+  echo "$MS_NAME=$MS_NUM" >> "$MS_MAP_FILE"
   log "Milestone: $MS_NAME → #$MS_NUM"
 done
+
+ms_map_get() { grep "^$1=" "$MS_MAP_FILE" 2>/dev/null | tail -1 | cut -d= -f2; }
 
 # --- Helper: find milestone for an issue ---
 find_milestone_for_issue() {
@@ -96,7 +99,7 @@ find_milestone_for_issue() {
     if jq -e ".milestones[$i].issues | index(\"$issue_id\")" "$PACKET" &>/dev/null; then
       local name
       name=$(jq -r ".milestones[$i].name" "$PACKET")
-      echo "${MS_MAP[$name]:-}"
+      ms_map_get "$name"
       return
     fi
   done
@@ -135,9 +138,9 @@ for ISSUE_ID in $ORDER; do
   # Idempotency check (GitHub search)
   existing=$(idempotency_check "$REPO" "$ISSUE_ID" || true)
   if [[ -n "$existing" ]]; then
-    log "Skipping $ISSUE_ID (already exists as #$existing)"
+    log "Skipping $ISSUE_ID (already exists as #$existing — https://github.com/$REPO/issues/$existing)"
     state_record_created "$ISSUE_ID" "$existing" "https://github.com/$REPO/issues/$existing"
-    ID_MAP["$ISSUE_ID"]="$existing"
+    id_map_set "$ISSUE_ID" "$existing"
     SKIPPED=$((SKIPPED + 1))
     continue
   fi
@@ -153,7 +156,6 @@ for ISSUE_ID in $ORDER; do
   # Build body
   BODY_MD=$(echo "$DATA" | jq -r '.body_md // empty')
   if [[ -z "$BODY_MD" ]]; then
-    # Generate from template
     AC=$(echo "$DATA" | jq -r '.acceptanceCriteria[]' | sed 's/^/- [ ] /')
     IFACES=$(echo "$DATA" | jq -r '.interfaces[]' 2>/dev/null | sed 's/^/- /' || echo "- (none)")
     CONSTR=$(echo "$DATA" | jq -r '.constraints[]' 2>/dev/null | sed 's/^/- /' || echo "- (none)")
@@ -162,11 +164,13 @@ for ISSUE_ID in $ORDER; do
 
     DEPS_TEXT=""
     for dep in $DEPS_IDS; do
-      dep_num="${ID_MAP[$dep]:-}"
+      dep_num=$(id_map_get "$dep")
       if [[ -n "$dep_num" ]]; then
-        DEPS_TEXT="${DEPS_TEXT}Depends on: #${dep_num}\n"
+        DEPS_TEXT="${DEPS_TEXT}Depends on: #${dep_num}
+"
       else
-        DEPS_TEXT="${DEPS_TEXT}Depends on: ${dep} (not yet created)\n"
+        DEPS_TEXT="${DEPS_TEXT}Depends on: ${dep} (not yet created)
+"
       fi
     done
 
@@ -200,8 +204,7 @@ ${TESTS}
       BODY_MD="${BODY_MD}
 ## Dependencies
 
-$(echo -e "$DEPS_TEXT")
-"
+${DEPS_TEXT}"
     fi
 
     BODY_MD="${BODY_MD}
@@ -212,7 +215,6 @@ $(echo -e "$DEPS_TEXT")
 
 ${MARKER}"
   else
-    # Append marker to existing body_md
     MARKER=$(idempotency_marker "$ISSUE_ID" "$EPIC_ID")
     BODY_MD="${BODY_MD}
 
@@ -226,17 +228,23 @@ ${MARKER}"
   # Build labels
   LABELS="epic:$EPIC_ID,module:$MODULE,priority:$PRIORITY,oc:issue-id=$ISSUE_ID"
 
-  # Find milestone
-  MS_NUM=$(find_milestone_for_issue "$ISSUE_ID")
+  # Find milestone name for this issue
+  MS_TITLE=""
+  for (( mi=0; mi<MS_COUNT; mi++ )); do
+    if jq -e ".milestones[$mi].issues | index(\"$ISSUE_ID\")" "$PACKET" &>/dev/null; then
+      MS_TITLE=$(jq -r ".milestones[$mi].name" "$PACKET")
+      break
+    fi
+  done
 
   # Create issue
   log "Creating $ISSUE_ID: $GOAL"
-  CREATE_ARGS=(issue create -R "$REPO" --title "$ISSUE_ID: $GOAL" --body-file "$BODY_FILE" --label "$LABELS")
-  if [[ -n "$MS_NUM" ]]; then
-    CREATE_ARGS+=(--milestone "$MS_NUM")
+  MS_FLAG=""
+  if [[ -n "$MS_TITLE" ]]; then
+    MS_FLAG="--milestone $MS_TITLE"
   fi
 
-  GH_OUTPUT=$(gh_exec "${CREATE_ARGS[@]}" 2>&1) && rc=0 || rc=$?
+  GH_OUTPUT=$(gh issue create -R "$REPO" --title "$ISSUE_ID: $GOAL" --body-file "$BODY_FILE" --label "$LABELS" $MS_FLAG 2>&1) && rc=0 || rc=$?
   rm -f "$BODY_FILE"
 
   if [[ $rc -ne 0 ]]; then
@@ -258,10 +266,12 @@ ${MARKER}"
   fi
 
   state_record_created "$ISSUE_ID" "$GH_NUM" "$GH_URL"
-  ID_MAP["$ISSUE_ID"]="$GH_NUM"
+  id_map_set "$ISSUE_ID" "$GH_NUM"
   log "Created $ISSUE_ID → #$GH_NUM ($GH_URL)"
   CREATED=$((CREATED + 1))
 done
+
+rm -f "$MS_MAP_FILE"
 
 # --- Summary ---
 TOTAL=$((CREATED + SKIPPED + FAILED))
