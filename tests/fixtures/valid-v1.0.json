@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "epics": [
+    { "id": "EPIC-001", "title": "Core Infrastructure" }
+  ],
+  "issues": [
+    {
+      "id": "ISSUE-001",
+      "title": "Setup project",
+      "epicId": "EPIC-001",
+      "goal": "Initialize the project structure",
+      "acceptanceCriteria": ["Project compiles", "Tests pass"]
+    }
+  ],
+  "dependencyDAG": {}
+}

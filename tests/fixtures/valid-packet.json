@@ -1,0 +1,66 @@
+{
+  "version": "1.1",
+  "project": "task-app",
+  "epics": [
+    {
+      "id": "EPIC-001",
+      "title": "Authentication Module",
+      "goal": "Implement user authentication",
+      "modules": ["auth"],
+      "issues": [
+        {
+          "id": "ISSUE-001",
+          "module": "auth",
+          "goal": "Create login endpoint",
+          "acceptanceCriteria": ["Users can login with email/password"],
+          "interfaces": ["POST /api/auth/login"],
+          "constraints": ["JWT token expiry: 24h"],
+          "testPlan": ["Test valid credentials return 200 + token"],
+          "dependsOn": [],
+          "priority": "high"
+        },
+        {
+          "id": "ISSUE-002",
+          "module": "auth",
+          "goal": "Create registration endpoint",
+          "acceptanceCriteria": ["Users can register with email/password"],
+          "interfaces": ["POST /api/auth/register"],
+          "constraints": ["Email must be unique"],
+          "testPlan": ["Test duplicate email returns 409"],
+          "dependsOn": ["ISSUE-001"],
+          "priority": "high"
+        }
+      ]
+    },
+    {
+      "id": "EPIC-002",
+      "title": "Task Management",
+      "goal": "Core task CRUD",
+      "modules": ["tasks"],
+      "issues": [
+        {
+          "id": "ISSUE-003",
+          "module": "tasks",
+          "goal": "Create task CRUD endpoints",
+          "acceptanceCriteria": ["CRUD operations work for tasks"],
+          "interfaces": ["GET/POST/PUT/DELETE /api/tasks"],
+          "constraints": ["Requires auth"],
+          "testPlan": ["Test CRUD with valid auth token"],
+          "dependsOn": ["ISSUE-001"],
+          "priority": "medium"
+        }
+      ]
+    }
+  ],
+  "dependencyDAG": {
+    "nodes": ["ISSUE-001", "ISSUE-002", "ISSUE-003"],
+    "edges": [
+      ["ISSUE-001", "ISSUE-002"],
+      ["ISSUE-001", "ISSUE-003"]
+    ]
+  },
+  "milestones": [
+    { "name": "v1.0-auth", "issues": ["ISSUE-001", "ISSUE-002"] },
+    { "name": "v1.0-tasks", "issues": ["ISSUE-003"] }
+  ]
+}

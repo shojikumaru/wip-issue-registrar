@@ -1,0 +1,25 @@
+{
+  "version": "1.1",
+  "project": "",
+  "epics": [
+    {
+      "id": "EPIC-001",
+      "title": "Test",
+      "modules": ["test"],
+      "issues": [
+        {
+          "id": "BAD-ID",
+          "module": "test",
+          "goal": "",
+          "acceptanceCriteria": [],
+          "interfaces": [],
+          "constraints": [],
+          "testPlan": [],
+          "dependsOn": [],
+          "priority": "critical"
+        }
+      ]
+    }
+  ],
+  "dependencyDAG": { "nodes": [], "edges": [] }
+}
