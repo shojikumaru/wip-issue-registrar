@@ -16,7 +16,7 @@ fi
 
 # --- 2. Valid JSON ---
 if ! jq empty "$PACKET" 2>/dev/null; then
-  echo "ERROR: $.  Invalid JSON" >&2
+  echo "ERROR: Invalid JSON: $PACKET" >&2
   exit 1
 fi
 
@@ -29,77 +29,133 @@ elif [[ "$VERSION" != "1.0" && "$VERSION" != "1.1" ]]; then
 fi
 
 # --- 4. Top-level required fields ---
-for field in epics issues dependencyDAG; do
+for field in project epics dependencyDAG; do
   if [[ "$(jq "has(\"$field\")" "$PACKET")" != "true" ]]; then
     err "$.$field  Missing required field '$field'"
   fi
 done
 
-# v1.1 requires milestones at top level
-if [[ "$VERSION" == "1.1" ]]; then
-  if [[ "$(jq 'has("milestones")' "$PACKET")" != "true" ]]; then
-    err "$.milestones  Missing required field 'milestones' (required in v1.1)"
-  fi
+# project must not be empty
+PROJECT=$(jq -r '.project // empty' "$PACKET")
+if [[ -z "$PROJECT" ]]; then
+  err "$.project  Field must not be empty"
 fi
 
-# --- 5. Validate epics ---
+# --- 5. dependencyDAG sub-fields ---
+if [[ "$(jq '.dependencyDAG | has("nodes")' "$PACKET" 2>/dev/null)" != "true" ]]; then
+  err "$.dependencyDAG.nodes  Missing required field"
+fi
+if [[ "$(jq '.dependencyDAG | has("edges")' "$PACKET" 2>/dev/null)" != "true" ]]; then
+  err "$.dependencyDAG.edges  Missing required field"
+fi
+
+# --- 6. Validate epics and nested issues ---
 EPIC_COUNT=$(jq '.epics // [] | length' "$PACKET")
+if [[ "$EPIC_COUNT" -eq 0 ]]; then
+  err "$.epics  Must have at least 1 epic"
+fi
+
+# Collect all IDs for DAG validation later
+ALL_IDS=()
+
 for (( i=0; i<EPIC_COUNT; i++ )); do
-  PREFIX="$.epics[$i]"
-  
-  # Required fields
-  for field in id title; do
-    val=$(jq -r ".epics[$i].$field // empty" "$PACKET")
-    if [[ -z "$val" ]]; then
-      err "$PREFIX.$field  Missing required field '$field'"
+  EP="$.epics[$i]"
+
+  # Required epic fields
+  for field in id title modules issues; do
+    if [[ "$(jq ".epics[$i] | has(\"$field\")" "$PACKET")" != "true" ]]; then
+      err "$EP.$field  Missing required field"
     fi
   done
-  
-  # ID format: EPIC-xxx
+
+  # Epic ID format
   EPIC_ID=$(jq -r ".epics[$i].id // empty" "$PACKET")
-  if [[ -n "$EPIC_ID" ]] && ! echo "$EPIC_ID" | grep -qE '^EPIC-[0-9]+$'; then
-    err "$PREFIX.id  Invalid ID format '$EPIC_ID' (expected EPIC-xxx)"
+  if [[ -n "$EPIC_ID" ]]; then
+    ALL_IDS+=("$EPIC_ID")
+    if ! echo "$EPIC_ID" | grep -qE '^EPIC-[0-9]{3}$'; then
+      err "$EP.id  Invalid format '$EPIC_ID' (expected EPIC-NNN)"
+    fi
   fi
-done
 
-# --- 6. Validate issues ---
-ISSUE_COUNT=$(jq '.issues // [] | length' "$PACKET")
-REQUIRED_ISSUE_FIELDS=(id title epicId goal acceptanceCriteria)
+  # Validate nested issues
+  ISSUE_COUNT=$(jq ".epics[$i].issues // [] | length" "$PACKET")
+  if [[ "$ISSUE_COUNT" -eq 0 ]]; then
+    err "$EP.issues  Must have at least 1 issue"
+  fi
 
-for (( i=0; i<ISSUE_COUNT; i++ )); do
-  PREFIX="$.issues[$i]"
-  
-  for field in "${REQUIRED_ISSUE_FIELDS[@]}"; do
-    val=$(jq -r ".issues[$i].$field // empty" "$PACKET")
-    if [[ -z "$val" ]]; then
-      # acceptanceCriteria is an array — check differently
-      if [[ "$field" == "acceptanceCriteria" ]]; then
-        ac_len=$(jq ".issues[$i].acceptanceCriteria // null | length" "$PACKET")
-        if [[ "$ac_len" == "0" || "$ac_len" == "null" ]]; then
-          err "$PREFIX.$field  Missing required field '$field'"
-        fi
-      else
-        err "$PREFIX.$field  Missing required field '$field'"
+  for (( j=0; j<ISSUE_COUNT; j++ )); do
+    IS="$EP.issues[$j]"
+
+    # Required issue fields
+    for field in id module goal acceptanceCriteria interfaces constraints testPlan dependsOn priority; do
+      if [[ "$(jq ".epics[$i].issues[$j] | has(\"$field\")" "$PACKET")" != "true" ]]; then
+        err "$IS.$field  Missing required field"
+      fi
+    done
+
+    # Issue ID format
+    ISSUE_ID=$(jq -r ".epics[$i].issues[$j].id // empty" "$PACKET")
+    if [[ -n "$ISSUE_ID" ]]; then
+      ALL_IDS+=("$ISSUE_ID")
+      if ! echo "$ISSUE_ID" | grep -qE '^ISSUE-[0-9]{3}$'; then
+        err "$IS.id  Invalid format '$ISSUE_ID' (expected ISSUE-NNN)"
       fi
     fi
-  done
-  
-  # v1.1 requires body_md on each issue
-  if [[ "$VERSION" == "1.1" ]]; then
-    val=$(jq -r ".issues[$i].body_md // empty" "$PACKET")
-    if [[ -z "$val" ]]; then
-      err "$PREFIX.body_md  Missing required field 'body_md' (required in v1.1)"
+
+    # Priority enum
+    PRIORITY=$(jq -r ".epics[$i].issues[$j].priority // empty" "$PACKET")
+    if [[ -n "$PRIORITY" ]] && [[ "$PRIORITY" != "high" && "$PRIORITY" != "medium" && "$PRIORITY" != "low" ]]; then
+      err "$IS.priority  Invalid value '$PRIORITY' (expected high|medium|low)"
     fi
+
+    # Goal non-empty
+    GOAL=$(jq -r ".epics[$i].issues[$j].goal // empty" "$PACKET")
+    if [[ -z "$GOAL" ]]; then
+      err "$IS.goal  Must not be empty"
+    fi
+
+    # AC at least 1 item
+    AC_LEN=$(jq ".epics[$i].issues[$j].acceptanceCriteria // [] | length" "$PACKET")
+    if [[ "$AC_LEN" -eq 0 ]]; then
+      err "$IS.acceptanceCriteria  Must have at least 1 item"
+    fi
+
+    # testPlan at least 1 item
+    TP_LEN=$(jq ".epics[$i].issues[$j].testPlan // [] | length" "$PACKET")
+    if [[ "$TP_LEN" -eq 0 ]]; then
+      err "$IS.testPlan  Must have at least 1 item"
+    fi
+  done
+done
+
+# --- 7. DAG edge references ---
+EDGE_COUNT=$(jq '.dependencyDAG.edges // [] | length' "$PACKET")
+for (( i=0; i<EDGE_COUNT; i++ )); do
+  FROM=$(jq -r ".dependencyDAG.edges[$i][0]" "$PACKET")
+  TO=$(jq -r ".dependencyDAG.edges[$i][1]" "$PACKET")
+
+  found_from=false
+  found_to=false
+  for id in "${ALL_IDS[@]}"; do
+    [[ "$id" == "$FROM" ]] && found_from=true
+    [[ "$id" == "$TO" ]] && found_to=true
+  done
+
+  if [[ "$found_from" == "false" ]]; then
+    echo "[WARN]  DAG edge references unknown node: '$FROM'" >&2
   fi
-  
-  # ID format: ISSUE-xxx
-  ISSUE_ID=$(jq -r ".issues[$i].id // empty" "$PACKET")
-  if [[ -n "$ISSUE_ID" ]] && ! echo "$ISSUE_ID" | grep -qE '^ISSUE-[0-9]+$'; then
-    err "$PREFIX.id  Invalid ID format '$ISSUE_ID' (expected ISSUE-xxx)"
+  if [[ "$found_to" == "false" ]]; then
+    echo "[WARN]  DAG edge references unknown node: '$TO'" >&2
   fi
 done
 
-# --- 7. Report ---
+# --- 8. Duplicate ID check ---
+DUP=$(printf '%s\n' "${ALL_IDS[@]}" | sort | uniq -d | head -1)
+if [[ -n "$DUP" ]]; then
+  err "Duplicate ID found: $DUP"
+fi
+
+# --- 9. Report ---
 if [[ ${#ERRORS[@]} -gt 0 ]]; then
   echo "Validation failed with ${#ERRORS[@]} error(s):" >&2
   for e in "${ERRORS[@]}"; do
@@ -108,5 +164,6 @@ if [[ ${#ERRORS[@]} -gt 0 ]]; then
   exit 1
 fi
 
-echo "Validation passed (schema v${VERSION})"
+TOTAL_ISSUES=$(jq '[.epics[].issues[]] | length' "$PACKET")
+echo "Validation passed ✅ (version=$VERSION, epics=$EPIC_COUNT, issues=$TOTAL_ISSUES)"
 exit 0
